@@ -21,7 +21,8 @@ def init_session_state():
         'processed_df': None,
         'table_name': "",
         'preprocessing_settings': {},
-        'new_upload': False
+        'new_upload': False,
+        'encoding': 'utf-8'
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -33,42 +34,53 @@ def display_file_uploader():
     """ファイルアップロードUIを表示し、アップロードされたファイルを処理する"""
     with st.container(border=True):
         st.header("1. データのアップロード")
-        st.info("分析したいCSVまたはExcelファイルをアップロードしてください。新しいファイルをアップロードすると、現在の作業内容はリセットされます。")
+        st.info("分析したいCSVまたはExcelファイルをアップロードしてください。")
+
+        def set_new_upload_flag():
+            st.session_state.new_upload = True
 
         uploaded_file = st.file_uploader(
-            "ファイルを選択", type=['csv', 'xlsx'], label_visibility="collapsed"
+            "ファイルを選択", type=['csv', 'xlsx'], label_visibility="collapsed", on_change=set_new_upload_flag
         )
 
-        if uploaded_file:
-            # 異なるファイルがアップロードされたことを検知
-            if uploaded_file.name != st.session_state.get('last_uploaded_filename'):
-                st.session_state.new_upload = True
-                st.session_state.last_uploaded_filename = uploaded_file.name
+        # CSVがアップロードされた場合のみエンコーディング選択肢を表示
+        if uploaded_file and uploaded_file.name.endswith('.csv'):
+            st.selectbox(
+                "CSVファイルのエンコーディング:",
+                ('utf-8', 'shift-jis', 'cp932'),
+                key='encoding',
+                on_change=set_new_upload_flag
+            )
 
-            if st.session_state.new_upload:
-                try:
-                    with st.spinner("ファイルを読み込んでいます..."):
-                        if uploaded_file.name.endswith('.csv'):
-                            df = pd.read_csv(uploaded_file)
-                        else:
-                            df = pd.read_excel(uploaded_file)
+        if uploaded_file and st.session_state.new_upload:
+            try:
+                with st.spinner("ファイルを読み込んでいます..."):
+                    uploaded_file.seek(0)
+                    if uploaded_file.name.endswith('.csv'):
+                        df = pd.read_csv(uploaded_file, encoding=st.session_state.encoding)
+                    else:
+                        df = pd.read_excel(uploaded_file)
 
-                        # 状態をリセット
-                        st.session_state.uploaded_df = df
-                        st.session_state.processed_df = df.copy()
-                        st.session_state.table_name = os.path.splitext(uploaded_file.name)[0]
-                        st.session_state.preprocessing_settings = {
-                            col: {'dtype': str(df[col].dtype), 'missing_values': '何もしない'} for col in df.columns
-                        }
-                        st.session_state.new_upload = False
-                        st.success(f"ファイル「{uploaded_file.name}」を正常に読み込みました。")
-                        st.rerun() # 状態を反映させるために再実行
+                    # 状態をリセット
+                    st.session_state.uploaded_df = df
+                    st.session_state.processed_df = df.copy()
+                    st.session_state.table_name = os.path.splitext(uploaded_file.name)[0]
+                    st.session_state.preprocessing_settings = {
+                        col: {'dtype': str(df[col].dtype), 'missing_values': '何もしない'} for col in df.columns
+                    }
+                    st.session_state.new_upload = False
+                    st.success(f"ファイル「{uploaded_file.name}」を正常に読み込みました。")
+                    st.rerun()
 
-                except Exception as e:
-                    st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
-                    # エラー発生時は状態をクリア
-                    for key in ['uploaded_df', 'processed_df', 'table_name']:
-                        st.session_state[key] = None
+            except UnicodeDecodeError:
+                st.error(f"エンコーディング '{st.session_state.encoding}' でファイルをデコードできませんでした。正しいエンコーディングを選択してください。")
+                st.session_state.new_upload = True # エラーが出ても再試行できるようにフラグを立てておく
+                st.session_state.uploaded_df = None # エラーが出たらDFをクリア
+                st.session_state.processed_df = None
+            except Exception as e:
+                st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+                for key in ['uploaded_df', 'processed_df', 'table_name', 'new_upload']:
+                    st.session_state[key] = None
 
 def display_preprocessing_ui():
     """データ前処理のUIを表示・処理する"""
